@@ -1064,6 +1064,7 @@ Set shares -1
 print('A new metaclass')
 
 from collections import OrderedDict
+from inspect import Parameter, Signature
 
 class Structmeta(type):
     
@@ -1081,21 +1082,6 @@ class Structmeta(type):
         sig = make_signature(fields)
         setattr(clsobj, '__signature__', sig)
         return clsobj
-
-class Typed(Descriptor):
-    ty = object # Expected type
-    def __set__(self, instance, value):
-        if not isinstance(value, self.ty):
-            raise TypeError("Expected %s" % self.ty)
-        super().__set__(instance, value)
-class Integer(Typed):
-    ty = int
-class Float(Typed):
-    ty = float
-class String(Typed):
-    ty = str
-
-from inspect import Parameter, Signature
 
 class Descriptor:
     
@@ -1115,6 +1101,7 @@ class Descriptor:
     def __delete__(self, instance):
         print('Delete', self.name)
         del instance.__dict__[self.name]
+
 def make_signature(names):
     return Signature(
             Parameter(name,
@@ -1128,6 +1115,20 @@ class Structure(metaclass=Structmeta):
         bound = self.__signature__.bind(*args, **kwargs)
         for name, val in bound.arguments.items():
             setattr(self, name, val)
+
+class Typed(Descriptor):
+    ty = object # Expected type
+    def __set__(self, instance, value):
+        if not isinstance(value, self.ty):
+            raise TypeError("Expected %s" % self.ty)
+        super().__set__(instance, value)
+
+class Integer(Typed):
+    ty = int
+class Float(Typed):
+    ty = float
+class String(Typed):
+    ty = str
 
 class Positive(Descriptor):
     def __set__(self, instance, value):
@@ -1145,4 +1146,262 @@ class Stock(Structure):
     shares = PositiveInteger()
     price = PositiveFloat()
 
+"""
+>>> s = Stock('GOOG', -1, 490.1)
+Set name GOOG
+Traceback (most recent call last):
+File "<stdin>", line 1, in <module>
+File "/home/vagrant/Trashcode/meta.py", line 1117, in __init__
+setattr(self, name, val)
+File "/home/vagrant/Trashcode/meta.py", line 1124, in __set__
+super().__set__(instance, value)
+File "/home/vagrant/Trashcode/meta.py", line 1136, in __set__
+raise ValueError('Must be >= 0')
+ValueError: Must be >= 0
+>>> s = Stock('GOOG', 1, 490.1)
+Set name GOOG
+Set shares 1
+Set price 490.1
+>>> s.name = 123
+Traceback (most recent call last):
+File "<stdin>", line 1, in <module>
+File "/home/vagrant/Trashcode/meta.py", line 1123, in __set__
+raise TypeError("Expected %s" % self.ty)
+TypeError: Expected <class 'str'>
+>>> s.price = -1
+Traceback (most recent call last):
+File "<stdin>", line 1, in <module>
+File "/home/vagrant/Trashcode/meta.py", line 1123, in __set__
+raise TypeError("Expected %s" % self.ty)
+TypeError: Expected <class 'float'>
+>>> s.price = -1.0 
+Traceback (most recent call last):
+File "<stdin>", line 1, in <module>
+File "/home/vagrant/Trashcode/meta.py", line 1124, in __set__
+super().__set__(instance, value)
+File "/home/vagrant/Trashcode/meta.py", line 1136, in __set__
+raise ValueError('Must be >= 0')
+ValueError: Must be >= 0
+>>>
+Now it works!
 
+Using the OrderedDict with __prepare__ during class creation, and let you completely rid of the 
+_fields attribute, and will record the order of the attributes, based on the order they are listed 
+in the class and keep them order then fill the names and therefore in the arguments of String, PositiveInteger
+and PositiveFloat are now gone.
+
+A technicality: when fully creating the class you must pass a full python dict, not a customized one, check (1)
+"""
+print('Duplicate detection')
+
+from collections import OrderedDict
+from inspect import Parameter, Signature
+
+class NoDupOrderedDict(OrderedDict):
+    def __setitem__(self, key, value):
+        if key in self:
+            raise NameError('%s already defined'
+                             % key)
+        super().__setitem__(key, value)
+        
+class Structmeta(type):
+    
+    @classmethod
+    def __prepare__(cls, name, bases):
+        return NoDupOrderedDict()
+
+    def __new__(cls, name, bases, clsdict):
+        fields = [key for key, val in clsdict.items()
+                 if isinstance(val, Descriptor)]
+        for name in fields:
+            clsdict[name].name = name
+
+        clsobj = super().__new__(cls, name, bases, dict(clsdict)) # (1)
+        sig = make_signature(fields)
+        setattr(clsobj, '__signature__', sig)
+        return clsobj
+
+
+
+class Descriptor:
+    
+    def __init__(self, name=None):
+        self.name = name
+    #this is no neccesary    
+    def __get__(self, instance, cls):
+        # instance: is the instance being manipulated
+        # e.g. Stock instance
+        print('Get', self.name)
+        return instance.__dict__[self.name]
+    
+    def __set__(self, instance, value):
+        print('Set', self.name, value)
+        instance.__dict__[self.name] = value
+
+    def __delete__(self, instance):
+        print('Delete', self.name)
+        del instance.__dict__[self.name]
+
+def make_signature(names):
+    return Signature(
+            Parameter(name,
+                Parameter.POSITIONAL_OR_KEYWORD)
+            for name in names
+            )
+
+class Structure(metaclass=Structmeta):
+    _fields = []
+    def __init__(self, *args, **kwargs):
+        bound = self.__signature__.bind(*args, **kwargs)
+        for name, val in bound.arguments.items():
+            setattr(self, name, val)
+
+class Typed(Descriptor):
+    ty = object # Expected type
+    def __set__(self, instance, value):
+        if not isinstance(value, self.ty):
+            raise TypeError("Expected %s" % self.ty)
+        super().__set__(instance, value)
+
+class Integer(Typed):
+    ty = int
+class Float(Typed):
+    ty = float
+class String(Typed):
+    ty = str
+
+class Positive(Descriptor):
+    def __set__(self, instance, value):
+        if value < 0:
+            raise ValueError('Must be >= 0')
+        super().__set__(instance, value)
+
+class PositiveInteger(Integer, Positive):
+    pass
+class PositiveFloat(Float, Positive):
+    pass
+
+class Stock(Structure):
+    name = String()
+    shares = PositiveInteger()
+    price = PositiveFloat()
+
+"""
+Traceback (most recent call last):
+File "/home/vagrant/Trashcode/meta.py", line 1282, in <module>   
+class Stock(Structure):
+File "/home/vagrant/Trashcode/meta.py", line 1286, in Stock      
+name = String()
+File "/home/vagrant/Trashcode/meta.py", line 1201, in __setitem__
+raise NameError('%s already defined'
+NameError: name already defined
+>>>)
+
+The problem with all of this is performance....
+- Several large bottlenecks
+    - Signature enforcement
+    - Multiple inheritance/super in descriptors
+"""
+
+print('Performance')
+
+
+from collections import OrderedDict
+from inspect import Parameter, Signature
+
+class NoDupOrderedDict(OrderedDict):
+    def __setitem__(self, key, value):
+        if key in self:
+            raise NameError('%s already defined'
+                             % key)
+        super().__setitem__(key, value)
+        
+class Structmeta(type):
+    
+    @classmethod
+    def __prepare__(cls, name, bases):
+        return NoDupOrderedDict()
+
+    def __new__(cls, name, bases, clsdict):
+        fields = [key for key, val in clsdict.items()
+                 if isinstance(val, Descriptor)]
+        for name in fields:
+            clsdict[name].name = name
+
+        clsobj = super().__new__(cls, name, bases, dict(clsdict)) # (1)
+        sig = make_signature(fields)
+        setattr(clsobj, '__signature__', sig)
+        return clsobj
+
+def _make_init(fields):
+    '''
+    Give a list of fields names, mane an __init__ method
+    '''
+    code = 'def __init__(self, %s):\n' % \
+            ','.join(fields)
+    for name in fields:
+        code += '       self.%s = %s\n' % (name, name)
+    return code 
+
+class Descriptor:
+    
+    def __init__(self, name=None):
+        self.name = name
+    #this is no neccesary    
+    def __get__(self, instance, cls):
+        # instance: is the instance being manipulated
+        # e.g. Stock instance
+        print('Get', self.name)
+        return instance.__dict__[self.name]
+    
+    def __set__(self, instance, value):
+        print('Set', self.name, value)
+        instance.__dict__[self.name] = value
+
+    def __delete__(self, instance):
+        print('Delete', self.name)
+        del instance.__dict__[self.name]
+
+def make_signature(names):
+    return Signature(
+            Parameter(name,
+                Parameter.POSITIONAL_OR_KEYWORD)
+            for name in names
+            )
+
+class Structure(metaclass=Structmeta):
+    _fields = []
+    def __init__(self, *args, **kwargs):
+        bound = self.__signature__.bind(*args, **kwargs)
+        for name, val in bound.arguments.items():
+            setattr(self, name, val)
+
+class Typed(Descriptor):
+    ty = object # Expected type
+    def __set__(self, instance, value):
+        if not isinstance(value, self.ty):
+            raise TypeError("Expected %s" % self.ty)
+        super().__set__(instance, value)
+
+class Integer(Typed):
+    ty = int
+class Float(Typed):
+    ty = float
+class String(Typed):
+    ty = str
+
+class Positive(Descriptor):
+    def __set__(self, instance, value):
+        if value < 0:
+            raise ValueError('Must be >= 0')
+        super().__set__(instance, value)
+
+class PositiveInteger(Integer, Positive):
+    pass
+class PositiveFloat(Float, Positive):
+    pass
+
+class Stock(Structure):
+    name = String()
+    shares = PositiveInteger()
+    price = PositiveFloat()
