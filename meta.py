@@ -647,4 +647,502 @@ def foo(*args, **kwargs):
 sig.bind() binds positional/keyword args to signature
 .arguments is an OrderedDict of passed values
 """
-foo(1,2,3)
+print('Takes positional args')
+print("foo('GOOG',100,141)")
+foo('GOOG',100,141)
+print("Also keyword arguments")
+print("foo(shares=100, price=141, name='GOOG')")
+foo(shares=100, price=141, name='GOOG')
+
+"""
+Solution of classes with signature.
+"""
+
+print('Metaclass signatures')
+from inspect import Parameter, Signature
+
+def make_signature(names):
+    return Signature(
+            Parameter(name,
+                Parameter.POSITIONAL_OR_KEYWORD)
+            for name in names
+            )
+class Structure:
+    __signature__ = make_signature([])
+    def __init__(self, *args, **kwargs):
+        bound = self.__signature__.bind(
+                                *args, **kwargs)
+        for name, val in bound.arguments.items():
+            setattr(self, name, val)
+
+class Stock(Structure):
+    __signature__ = make_signature(['name', 'shares', 'price'])
+
+class Point(Structure):
+    __signature__ = make_signature(['x', 'y'])
+
+class Address(Structure):
+    __signature__ = make_signature(['hostname', 'port'])
+
+"""
+This technique also works for classes, enabling both positional arguments and keyword arguments.
+Also enables error checking builtin, extra thing is that provides extra information to the user 
+when examining the signatures.
+
+>>> s = Stock('ACME', shares=50, price=91.1)
+>>> s.name
+'ACME'
+>>> s.shares
+50
+>>> s.price
+91.1
+>>> import inspect
+>>> print(inspect.signature(Stock))
+(name, shares, price)
+>>>
+
+This fall into another issue. creating more need to write more code ie. __signature__ all over the classes.
+"""
+
+print('Metaclass solution')
+
+
+from inspect import Parameter, Signature
+
+def make_signature(names):
+    return Signature(
+            Parameter(name,
+                Parameter.POSITIONAL_OR_KEYWORD)
+            for name in names
+            )
+class Structmeta(type):
+    def __new__(cls, name, bases, clsdict):
+        clsobj = super().__new__(cls, name,
+                                 bases, clsdict)
+        sig = make_signature(clsobj._fields)
+        setattr(clsobj, '__signature__', sig)
+        return clsobj
+
+class Structure(metaclass=Structmeta):
+    _fields = []
+    def __init__(self, *args, **kwargs):
+        bound = self.__signature__.bind(*args, **kwargs)
+        for name, val in bound.arguments.items():
+            setattr(self, name, val)
+
+class Stock(Structure):
+    _fields = ['name', 'shares', 'price']
+
+class Point(Structure):
+    _fields = ['x', 'y']
+
+class Address(Structure):
+    _fields = ['hostname', 'port']
+
+"""
+The extensibility happens behind the scenes, with the Structure class using Structmeta and make_signature, to inject
+silently the signatures to each derived classes.
+
+>>> s = Stock('AAPL', shares=505, price=92.1)
+>>> s.name
+'AAPL'
+>>> s.shares
+505 
+>>> s.price
+92.1
+
+>>> values = {'name':'AAPL', 'shares':5012, 'price':92.1}
+>>> s = Stock(**values)
+>>> s.name
+'AAPL'
+>>> s.shares
+5012
+>>> s.price
+92.1
+>>> 
+>>> print(inspect.signature(Stock))
+(name, shares, price)
+>>>
+"""
+
+print('The dot operator')
+
+"""
+Using python properties, you can setup a method getter and setter to upgrade attributes to have checks
+"""
+
+class Stock(Structure):
+    _fields = ['name', 'shares', 'price']
+
+    @property
+    def shares(self):
+        return self._shares
+
+    @shares.setter
+    def shares(self, value):
+        if not isinstance(value, int):
+            raise TypeError('Expected int')
+        if value < 0:
+            raise ValueError('Must be >= 0')
+        self._shares = value
+
+"""
+You can do this way a lot of sort of things, like type checking,
+value checking and so on...
+
+>>> s = Stock('ACME', 50, 91.1)
+>>> s.shares = 'a lot'
+Traceback (most recent call last):
+File "<stdin>", line 1, in <module>
+File "/home/vagrant/Trashcode/meta.py", line 784, in shares
+raise TypeError('Expected int')
+TypeError: Expected int
+>>> s.shares = -10 
+Traceback (most recent call last):
+File "<stdin>", line 1, in <module>
+File "/home/vagrant/Trashcode/meta.py", line 786, in shares
+raise ValueError('Must be >= 0')
+ValueError: Must be >= 0
+>>> s.shares = 37
+>>> s.shares
+37  
+>>> 
+
+The issue, gets annoying.
+    - Two kinds of checking are interwined
+    - Type checking: int, float, str, etc.
+    - Validation: >, >=, <, <=, !=. etc
+How to structure it?
+Using descriptor protocol, as properties are implemented via descriptors:
+__get__, __set__, __del__ and so on.
+Customized processing of attribute access.
+"""
+
+
+from inspect import Parameter, Signature
+
+class Descriptor:
+    
+    def __init__(self, name=None):
+        self.name = name
+    #this is no neccesary    
+    def __get__(self, instance, cls):
+        # instance: is the instance being manipulated
+        # e.g. Stock instance
+        print('Get', self.name)
+        return instance.__dict__[self.name]
+    
+    def __set__(self, instance, value):
+        print('Set', self.name, value)
+        instance.__dict__[self.name] = value
+
+    def __delete__(self, instance):
+        print('Delete', self.name)
+        del instance.__dict__[self.name]
+def make_signature(names):
+    return Signature(
+            Parameter(name,
+                Parameter.POSITIONAL_OR_KEYWORD)
+            for name in names
+            )
+class Structmeta(type):
+    def __new__(cls, name, bases, clsdict):
+        clsobj = super().__new__(cls, name,
+                                 bases, clsdict)
+        sig = make_signature(clsobj._fields)
+        setattr(clsobj, '__signature__', sig)
+        return clsobj
+
+class Structure(metaclass=Structmeta):
+    _fields = []
+    def __init__(self, *args, **kwargs):
+        bound = self.__signature__.bind(*args, **kwargs)
+        for name, val in bound.arguments.items():
+            setattr(self, name, val)
+
+class Stock(Structure):
+    _fields = ['name', 'shares', 'price']
+    shares = Descriptor('shares') # Redefine .shares
+class Point(Structure):
+    _fields = ['x', 'y']
+
+class Address(Structure):
+    _fields = ['hostname', 'port']
+
+"""
+Basically with a descriptor you can aim to certain attribute and manipulate it.
+
+>>> s = Stock('GOOG', 100, 490.1)
+Set shares 100
+>>> s.shares
+Get shares
+>>> del s.shares
+Delete shares
+>>> s.shares = 10
+Set shares 10
+>>>
+"""
+
+class Typed(Descriptor):
+    ty = object # Expected type
+    def __set__(self, instance, value):
+        if not isinstance(value, self.ty):
+            raise TypeError("Expected %s" % self.ty)
+        super().__set__(instance, value)
+class Integer(Typed):
+    ty = int
+class Float(Typed):
+    ty = float
+class String(Typed):
+    ty = str
+
+
+from inspect import Parameter, Signature
+
+class Descriptor:
+    
+    def __init__(self, name=None):
+        self.name = name
+    #this is no neccesary    
+    def __get__(self, instance, cls):
+        # instance: is the instance being manipulated
+        # e.g. Stock instance
+        print('Get', self.name)
+        return instance.__dict__[self.name]
+    
+    def __set__(self, instance, value):
+        print('Set', self.name, value)
+        instance.__dict__[self.name] = value
+
+    def __delete__(self, instance):
+        print('Delete', self.name)
+        del instance.__dict__[self.name]
+def make_signature(names):
+    return Signature(
+            Parameter(name,
+                Parameter.POSITIONAL_OR_KEYWORD)
+            for name in names
+            )
+class Structmeta(type):
+    def __new__(cls, name, bases, clsdict):
+        clsobj = super().__new__(cls, name,
+                                 bases, clsdict)
+        sig = make_signature(clsobj._fields)
+        setattr(clsobj, '__signature__', sig)
+        return clsobj
+
+class Structure(metaclass=Structmeta):
+    _fields = []
+    def __init__(self, *args, **kwargs):
+        bound = self.__signature__.bind(*args, **kwargs)
+        for name, val in bound.arguments.items():
+            setattr(self, name, val)
+
+class Stock(Structure):
+    _fields = ['name', 'shares', 'price']
+    name = String('name')
+    shares = Integer('shares')
+    price = Float('price')
+
+class Point(Structure):
+    _fields = ['x', 'y']
+
+class Address(Structure):
+    _fields = ['hostname', 'port']
+
+"""
+In this way you own the dot operator.
+
+>>> s = Stock('GOOG', 100, 490.1)
+Set name GOOG  
+Set shares 100 
+Set price 490.1
+>>> s.name = 42
+Traceback (most recent call last):
+File "<stdin>", line 1, in <module>
+File "/home/vagrant/Trashcode/meta.py", line 890, in __set__
+raise TypeError("Expected %s" % self.ty)
+TypeError: Expected <class 'str'>
+>>> s.shares = 'a lot'
+Traceback (most recent call last):
+File "<stdin>", line 1, in <module>
+File "/home/vagrant/Trashcode/meta.py", line 890, in __set__
+raise TypeError("Expected %s" % self.ty)
+TypeError: Expected <class 'int'>
+>>>
+Now more
+"""
+class Typed(Descriptor):
+    ty = object # Expected type
+    def __set__(self, instance, value):
+        if not isinstance(value, self.ty):
+            raise TypeError("Expected %s" % self.ty)
+        super().__set__(instance, value)
+class Integer(Typed):
+    ty = int
+class Float(Typed):
+    ty = float
+class String(Typed):
+    ty = str
+
+from inspect import Parameter, Signature
+
+class Descriptor:
+    
+    def __init__(self, name=None):
+        self.name = name
+    #this is no neccesary    
+    def __get__(self, instance, cls):
+        # instance: is the instance being manipulated
+        # e.g. Stock instance
+        print('Get', self.name)
+        return instance.__dict__[self.name]
+    
+    def __set__(self, instance, value):
+        print('Set', self.name, value)
+        instance.__dict__[self.name] = value
+
+    def __delete__(self, instance):
+        print('Delete', self.name)
+        del instance.__dict__[self.name]
+def make_signature(names):
+    return Signature(
+            Parameter(name,
+                Parameter.POSITIONAL_OR_KEYWORD)
+            for name in names
+            )
+class Structmeta(type):
+    def __new__(cls, name, bases, clsdict):
+        clsobj = super().__new__(cls, name,
+                                 bases, clsdict)
+        sig = make_signature(clsobj._fields)
+        setattr(clsobj, '__signature__', sig)
+        return clsobj
+
+class Structure(metaclass=Structmeta):
+    _fields = []
+    def __init__(self, *args, **kwargs):
+        bound = self.__signature__.bind(*args, **kwargs)
+        for name, val in bound.arguments.items():
+            setattr(self, name, val)
+
+class Positive(Descriptor):
+    def __set__(self, instance, value):
+        if value < 0:
+            raise ValueError('Must be >= 0')
+        super().__set__(instance, value)
+
+class PositiveInteger(Integer, Positive):
+    pass
+class PositiveFloat(Float, Positive):
+    pass
+
+class Stock(Structure):
+    _fields = ['name', 'shares', 'price']
+    name = String('name')
+    shares = PositiveInteger('shares')
+    price = PositiveFloat('price')
+"""
+Doing in this way the inheritance get lost because the super() function in Positive class.
+
+>>> PositiveInteger.__mro__
+(<class '__main__.PositiveInteger'>, <class '__main__.Integer'>, <class '__main__.Typed'>, <class '__main__.Descriptor'>, <class '__main__.Positive'>, <class '__main__.Descriptor'>, <class 'object'>)
+>>> s = Stock('GOOG', 100, 490.1)
+Set name GOOG
+Set shares 100
+Set price 490.1
+>>> s.shares = 'a'
+Traceback (most recent call last):
+File "<stdin>", line 1, in <module>
+File "/home/vagrant/Trashcode/meta.py", line 979, in __set__
+raise TypeError("Expected %s" % self.ty)
+TypeError: Expected <class 'int'>
+>>> s.shares = -1
+Set shares -1
+>>>
+"""
+print('A new metaclass')
+
+from collections import OrderedDict
+
+class Structmeta(type):
+    
+    @classmethod
+    def __prepare__(cls, name, bases):
+        return OrderedDict()
+
+    def __new__(cls, name, bases, clsdict):
+        fields = [key for key, val in clsdict.items()
+                 if isinstance(val, Descriptor)]
+        for name in fields:
+            clsdict[name].name = name
+
+        clsobj = super().__new__(cls, name, bases, dict(clsdict))
+        sig = make_signature(fields)
+        setattr(clsobj, '__signature__', sig)
+        return clsobj
+
+class Typed(Descriptor):
+    ty = object # Expected type
+    def __set__(self, instance, value):
+        if not isinstance(value, self.ty):
+            raise TypeError("Expected %s" % self.ty)
+        super().__set__(instance, value)
+class Integer(Typed):
+    ty = int
+class Float(Typed):
+    ty = float
+class String(Typed):
+    ty = str
+
+from inspect import Parameter, Signature
+
+class Descriptor:
+    
+    def __init__(self, name=None):
+        self.name = name
+    #this is no neccesary    
+    def __get__(self, instance, cls):
+        # instance: is the instance being manipulated
+        # e.g. Stock instance
+        print('Get', self.name)
+        return instance.__dict__[self.name]
+    
+    def __set__(self, instance, value):
+        print('Set', self.name, value)
+        instance.__dict__[self.name] = value
+
+    def __delete__(self, instance):
+        print('Delete', self.name)
+        del instance.__dict__[self.name]
+def make_signature(names):
+    return Signature(
+            Parameter(name,
+                Parameter.POSITIONAL_OR_KEYWORD)
+            for name in names
+            )
+
+class Structure(metaclass=Structmeta):
+    _fields = []
+    def __init__(self, *args, **kwargs):
+        bound = self.__signature__.bind(*args, **kwargs)
+        for name, val in bound.arguments.items():
+            setattr(self, name, val)
+
+class Positive(Descriptor):
+    def __set__(self, instance, value):
+        if value < 0:
+            raise ValueError('Must be >= 0')
+        super().__set__(instance, value)
+
+class PositiveInteger(Integer, Positive):
+    pass
+class PositiveFloat(Float, Positive):
+    pass
+
+class Stock(Structure):
+    name = String()
+    shares = PositiveInteger()
+    price = PositiveFloat()
+
+
